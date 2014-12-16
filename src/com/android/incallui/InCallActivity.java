@@ -16,17 +16,23 @@
 
 package com.android.incallui;
 
+import com.android.services.telephony.common.AudioMode;
 import com.android.services.telephony.common.Call;
 import com.android.services.telephony.common.Call.State;
 
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.FragmentTransaction;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.content.DialogInterface.OnCancelListener;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
@@ -38,7 +44,7 @@ import android.widget.Toast;
 /**
  * Phone app "in call" screen.
  */
-public class InCallActivity extends Activity {
+public class InCallActivity extends Activity implements SensorEventListener {
 
     public static final String SHOW_DIALPAD_EXTRA = "InCallActivity.show_dialpad";
 
@@ -54,6 +60,9 @@ public class InCallActivity extends Activity {
 
     /** Use to pass 'showDialpad' from {@link #onNewIntent} to {@link #onResume} */
     private boolean mShowDialpadRequested;
+
+    private SensorManager mSensorManager;
+    private Sensor mProximity;
 
     @Override
     protected void onCreate(Bundle icicle) {
@@ -73,6 +82,11 @@ public class InCallActivity extends Activity {
 
         // TODO(klp): Do we need to add this back when prox sensor is not available?
         // lp.inputFeatures |= WindowManager.LayoutParams.INPUT_FEATURE_DISABLE_USER_ACTIVITY;
+
+        // Get an instance of the sensor service, and use that to get an instance of
+        // a particular sensor.
+        mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        mProximity = mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
 
         // Inflate everything in incall_screen.xml and add it to the screen.
         setContentView(R.layout.incall_screen);
@@ -102,6 +116,8 @@ public class InCallActivity extends Activity {
             mCallButtonFragment.displayDialpad(true);
             mShowDialpadRequested = false;
         }
+
+        mSensorManager.registerListener(this, mProximity, SensorManager.SENSOR_DELAY_NORMAL);
     }
 
     // onPause is guaranteed to be called when the InCallActivity goes
@@ -121,6 +137,7 @@ public class InCallActivity extends Activity {
     @Override
     protected void onStop() {
         Log.d(this, "onStop()...");
+
         super.onStop();
     }
 
@@ -161,6 +178,9 @@ public class InCallActivity extends Activity {
     @Override
     public void finish() {
         Log.i(this, "finish().  Dialog showing: " + (mDialog != null));
+
+        mCallButtonFragment.getPresenter().setAudioMode(AudioMode.EARPIECE);
+        mSensorManager.unregisterListener(this);
 
         // skip finish if we are still showing a dialog.
         if (!hasPendingErrorDialog() && !mAnswerFragment.hasPendingDialogs()) {
@@ -506,5 +526,20 @@ public class InCallActivity extends Activity {
     private void onDialogDismissed() {
         mDialog = null;
         InCallPresenter.getInstance().onDismissDialog();
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent event) {
+        final float val = event.values[0];
+        final boolean far = (val >= mProximity.getMaximumRange());
+        CallButtonPresenter cbt = mCallButtonFragment.getPresenter();
+        if (far && (cbt.getAudioMode() == AudioMode.EARPIECE))
+            cbt.setAudioMode(AudioMode.SPEAKER);
+        else if (!far && (cbt.getAudioMode() == AudioMode.SPEAKER))
+            cbt.setAudioMode(AudioMode.EARPIECE);
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
 }
